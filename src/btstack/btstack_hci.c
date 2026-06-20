@@ -10,6 +10,7 @@
 #include "btstack_hci.h"
 #include "btstack_avdtp_source.h"
 #include "../pico_w_led.h"
+#include "sco_usb_bridge.h"
 
 
 #define A2DP_SOURCE_DEMO_INQUIRY_DURATION_1280MS 12
@@ -213,6 +214,15 @@ void bt_hci_init(void){
     gap_set_local_name("Pico USB Audio");
     gap_discoverable_control(0);
     gap_set_class_of_device(0x200408);
+
+        // Initialize HFP Audio Gateway (AG) to allow Hands-Free devices to connect
+        // RFCOMM channel 1 is used for HFP by default here
+        // hfp_ag_init(1);
+        // hfp_ag_init_supported_features(HFP_DEFAULT_AG_SUPPORTED_FEATURES);
+
+        // initialize SCO <-> USB bridge
+        // sco_usb_bridge_init();
+        // sco_usb_bridge_register_hfp();
 
     /* Register for HCI events */
     hci_event_callback_registration.callback = &hci_packet_handler;

@@ -92,7 +92,7 @@
  int8_t mute0_last = 0; 
 
  // Buffer for microphone data
- //int32_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4];
+ int32_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4];
 
  // Buffer for speaker data
  int32_t spk_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4];
@@ -401,7 +401,7 @@ void tinyusb_control_task(void){
  
    spk_data_size = tud_audio_read(spk_buf, n_bytes_received);
 
-   if (spk_data_size)
+  if (spk_data_size)
    {
     usb_stop_delay = 0;
     set_usb_streaming(true);
@@ -410,7 +410,11 @@ void tinyusb_control_task(void){
       int16_t *src = (int16_t *)spk_buf;
       uint16_t sample_count = spk_data_size / 4; // should be 44-45
 
+      // Push into A2DP slot queue (existing) and into SCO bridge spk ring
       audio_slot_push_samples(src, sample_count);
+      // convert stereo pairs -> push to bridge
+      extern void sco_usb_bridge_push_spk_samples(const int16_t *stereo_src, uint16_t stereo_pair_count);
+      // sco_usb_bridge_push_spk_samples(src, sample_count);
 
       is_usb_audio_running = true;
       spk_data_size = 0;
@@ -420,16 +424,29 @@ void tinyusb_control_task(void){
    return true;
  }
  
-//  bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
-//  {
-//    (void)rhport;
-//    (void)itf;
-//    (void)ep_in;
-//    (void)cur_alt_setting;
- 
-//    // This callback could be used to fill microphone data separately
-//    return true;
-//  }
+bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
+{
+  (void)rhport;
+  (void)itf;
+  (void)ep_in;
+  (void)cur_alt_setting;
+
+  // Fill microphone IN endpoint with silence for now. SCO bridge will fill real samples later.
+#if CFG_TUD_AUDIO_ENABLE_EP_IN
+  uint16_t n = CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX;
+  if (n == 0) return true;
+  // try to get mic samples from bridge
+  extern uint16_t sco_usb_bridge_pop_mic_samples(int16_t *dst, uint16_t max_samples);
+  uint16_t samples_needed = n / 2; // n bytes -> int16 samples
+  uint16_t got = sco_usb_bridge_pop_mic_samples((int16_t *)mic_buf, samples_needed);
+  if (got < samples_needed){
+    // pad remaining with zeros
+    memset(((int16_t *)mic_buf) + got, 0, (samples_needed - got) * 2);
+  }
+  tud_audio_n_write(0, mic_buf, n);
+#endif
+  return true;
+}
  
  //--------------------------------------------------------------------+
  // AUDIO Task
