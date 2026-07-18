@@ -124,6 +124,7 @@ uint8_t const desc_configuration[] =
 // Descriptor contents must exist long enough for transfer to complete
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
+  TU_LOG1("Get cfgdesc: %" PRIu8 "\r\n", index);
   (void)index; // for multiple configurations
   return desc_configuration;
 }
@@ -159,6 +160,7 @@ static uint16_t _desc_str[32 + 1];
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
   (void) langid;
   size_t chr_count;
+  TU_LOG1("Get string desc: %" PRIu8 "\r\n", index);
 
   switch ( index ) {
     case STRID_LANGID:

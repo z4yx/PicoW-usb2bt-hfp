@@ -225,7 +225,7 @@ int main() {
 
     while (1) {
         watchdog_update();  // feed the watchdog
-        tinyusb_control_task();
+        tinyusb_audio_control_task();
         sleep_ms(50);
     }
 

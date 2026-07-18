@@ -122,6 +122,7 @@
      .role = TUSB_ROLE_DEVICE,
      .speed = TUSB_SPEED_AUTO
    };
+  TU_LOG1("call tusb_init\r\n");
    tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
 
@@ -134,7 +135,7 @@
  }
  
 
-void tinyusb_control_task(void){
+void tinyusb_audio_control_task(void){
   //tud_task(); // TinyUSB device task
   audio_control_task();
 }
@@ -401,7 +402,7 @@ void tinyusb_control_task(void){
  
    spk_data_size = tud_audio_read(spk_buf, n_bytes_received);
 
-  if (spk_data_size)
+   if (spk_data_size)
    {
     usb_stop_delay = 0;
     set_usb_streaming(true);
@@ -467,7 +468,7 @@ bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, u
  }
  
 
-void audio_control_task(void)
+inline void audio_control_task(void)
  {
    if (*get_is_bt_sink_volume_changed_ptr())
    {
