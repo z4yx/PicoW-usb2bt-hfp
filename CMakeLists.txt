@@ -56,6 +56,35 @@ target_compile_definitions(fdk-aac PUBLIC FDK_ARM_ARCH)
 set(BTSTACK_3RD_PARTY_PATH ${PICO_SDK_PATH}/lib/btstack/3rd-party)
 #set(BTSTACK_EXAMPLE_PATH $ENV{PICO_SDK_PATH}/lib/btstack/3rd-party)
 
+find_package(Git QUIET)
+if(NOT GIT_FOUND)
+    message(WARNING "Git not found.")
+endif()
+
+execute_process(
+    COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+    WORKING_DIRECTORY ${PICO_SDK_PATH}/lib/tinyusb
+    OUTPUT_VARIABLE GIT_RAW_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+message(STATUS "Raw tinyusb Git version: ${GIT_RAW_VERSION}")
+
+string(REGEX MATCH "[0-9]+(\\.[0-9]+)+" GIT_CLEAN_VERSION "${GIT_RAW_VERSION}")
+
+if(NOT GIT_CLEAN_VERSION)
+    message(FATAL_ERROR "No semantic version of tinyusb found.")
+else()
+    message(STATUS "Cleaned semantic version of tinyusb: ${GIT_CLEAN_VERSION}")
+endif()
+
+set(REQUIRED_TUSB_VERSION  "0.19.0")
+if(GIT_CLEAN_VERSION VERSION_GREATER_EQUAL REQUIRED_TUSB_VERSION)
+    message(STATUS "Version ${GIT_CLEAN_VERSION} >= ${REQUIRED_TUSB_VERSION}. Passed.")
+else()
+    message(FATAL_ERROR "Version ${GIT_CLEAN_VERSION} < ${REQUIRED_TUSB_VERSION}. Too old!")
+endif()
 
 # Add executable.
 add_executable(${PROJECT_NAME}
