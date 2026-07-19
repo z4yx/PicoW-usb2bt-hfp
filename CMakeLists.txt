@@ -105,6 +105,7 @@ target_compile_definitions(PicoW_USB_BT_Audio PRIVATE
     # must enable on rp2040 & 330kbps(MQ)
     #LDAC_SOFT_FLOAT=OFF
 )
+target_link_options(PicoW_USB_BT_Audio PRIVATE "LINKER:--cref")
 
 
 

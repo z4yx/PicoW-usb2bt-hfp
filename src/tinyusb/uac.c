@@ -100,7 +100,7 @@
  int spk_data_size;
  // Resolution per format
  const uint8_t resolutions_per_format[CFG_TUD_AUDIO_FUNC_1_N_FORMATS] = {CFG_TUD_AUDIO_FUNC_1_FORMAT_1_RESOLUTION_RX,
-                                                                         CFG_TUD_AUDIO_FUNC_1_FORMAT_2_RESOLUTION_RX};
+                                                                         };
  // Current resolution, update on format change
  uint8_t current_resolution;
  
@@ -122,7 +122,6 @@
      .role = TUSB_ROLE_DEVICE,
      .speed = TUSB_SPEED_AUTO
    };
-  TU_LOG1("call tusb_init\r\n");
    tusb_init(BOARD_TUD_RHPORT, &dev_init);
 
 
@@ -382,7 +381,7 @@ void tinyusb_audio_control_task(void){
  
    // Clear buffer when streaming format is changed
    spk_data_size = 0;
-   if(alt != 0)
+   if(alt != 0 && alt <= CFG_TUD_AUDIO_FUNC_1_N_FORMATS)
    {
      current_resolution = resolutions_per_format[alt-1];
    }
@@ -393,9 +392,10 @@ void tinyusb_audio_control_task(void){
  uint16_t usb_stop_delay = 0;
  bool is_usb_audio_running = false;
 
- bool tud_audio_rx_done_pre_read_cb(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
+ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id, uint8_t ep_out, uint8_t cur_alt_setting)
  {
    (void)rhport;
+   (void)n_bytes_received;
    (void)func_id;
    (void)ep_out;
    (void)cur_alt_setting;
@@ -425,10 +425,11 @@ void tinyusb_audio_control_task(void){
    return true;
  }
  
-bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, uint8_t cur_alt_setting)
+bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_id, uint8_t ep_in, uint8_t cur_alt_setting)
 {
   (void)rhport;
-  (void)itf;
+  (void)n_bytes_sent;
+  (void)func_id;
   (void)ep_in;
   (void)cur_alt_setting;
 
@@ -444,6 +445,7 @@ bool tud_audio_tx_done_pre_load_cb(uint8_t rhport, uint8_t itf, uint8_t ep_in, u
     // pad remaining with zeros
     memset(((int16_t *)mic_buf) + got, 0, (samples_needed - got) * 2);
   }
+  TU_LOG2("tud_audio_n_write %hu B\r\n", n);
   tud_audio_n_write(0, mic_buf, n);
 #endif
   return true;
