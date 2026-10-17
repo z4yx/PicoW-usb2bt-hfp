@@ -1,0 +1,244 @@
+--- a/workflow/SKILL.md
++++ b/workflow/SKILL.md
+@@ -21,6 +21,40 @@
+ 
+ - 对应构建系统的 skill 脚本已存在（build-keil、flash-keil 等）。
+ - 各 skill 的外部依赖已安装（Keil UV4、CMake、PlatformIO CLI 等）。
++- **本工程覆盖（cmake）**：烧录步骤映射到 `flash-openocd-rp2350/scripts/flash_openocd.sh`，
++  调试步骤映射到 `debug-openocd-rp2350/scripts/gdb_openocd.sh`（均为 OpenOCD 通道，
++  取代未安装的 `flash-openocd` / `debug-gdb-openocd`）；脚本映射同时支持 `.py`
++  （用当前 Python 解释器）与可执行脚本（如 `.sh`，直接调用）。
++- 调试步骤是交互式 GDB：流水线把终端交给 `gdb_openocd.sh`，退出 GDB 后才继续收尾。
++
++## 本工程实测命令
++
++```bash
++# 编译 → 烧录 → 串口监控（必须先给 --build-dir/--build-type，否则会新建 build/ 并整盘重编）
++# 串口：/dev/ttyACM0 @115200（J-Link OB 的 VCOM，接到目标 UART；不给 --port 会走自动探测）
++python .claude/skills/workflow/scripts/workflow_runner.py \
++  --run build-flash-monitor --build-system cmake \
++  --project . --build-dir build-arm --build-type Release \
++  --flash-interface jlink --flash-target rp2350 --flash-speed 1000 \
++  --port /dev/ttyACM0 --baud 115200
++
++# 编译 → 烧录 → GDB 调试（第 3 步进入 (gdb) 提示符，quit 后流水线收尾）
++python .claude/skills/workflow/scripts/workflow_runner.py \
++  --run build-flash-debug --build-system cmake \
++  --project . --build-dir build-arm --build-type Release \
++  --flash-interface jlink --flash-target rp2350
++```
++
++参数要点：
++
++| 参数 | 本工程取值 | 说明 |
++|---|---|---|
++| `--build-dir` | `build-arm` | 缺省会在源码目录下新建 `build/`，等于从零重编 |
++| `--build-type` | `Release` | `build-arm/CMakeCache.txt` 就是 Release；缺省会按 Debug 配置并触发全量重编 |
++| `--flash-target` | `rp2350` | 传到 wrapper 的 `--target`，即 `target/rp2350.cfg` |
++| `--flash-speed` | `1000` | OpenOCD adapter speed（kHz），实测稳定值 |
++| `--artifact` | 自动 | 从左列的 `⭐ 首选` 行提取，本工程即 `build-arm/PicoW_USB_BT_Audio.elf` |
++
+ 
+ ## 执行步骤
+ 
+@@ -72,6 +106,6 @@
+ ## 交接关系
+ 
+ - 编排 `build-keil` / `build-cmake` / `build-platformio` 的编译步骤。
+-- 编排 `flash-keil` / `flash-openocd` / `flash-platformio` 的烧录步骤。
++- 编排 `flash-keil` / `flash-openocd-rp2350`（cmake 分支）/ `flash-platformio` 的烧录步骤。
+ - 编排 `serial-monitor` 的监控步骤。
+-- 编排 `debug-gdb-openocd` / `debug-platformio` 的调试步骤。
++- 编排 `debug-openocd-rp2350`（cmake 分支）/ `debug-platformio` 的调试步骤。
+--- a/workflow/references/usage.md
++++ b/workflow/references/usage.md
+@@ -15,8 +15,10 @@
+ # 编译 + 烧录 + GDB 调试（Keil）
+ python scripts/workflow_runner.py --run build-flash-debug --build-system keil --project /path/to/project.uvprojx
+ 
+-# 编译 + 烧录 + 串口监控（CMake + OpenOCD）
+-python scripts/workflow_runner.py --run build-flash-monitor --build-system cmake --project /path/to/source --flash-interface stlink --flash-target stm32f4x
++# 编译 + 烧录 + 串口监控（CMake + OpenOCD；本工程：RP2350 + J-Link）
++python scripts/workflow_runner.py --run build-flash-monitor --build-system cmake \
++  --project . --build-dir build-arm --build-type Release \
++  --flash-interface jlink --flash-target rp2350 --flash-speed 1000
+ 
+ # 指定串口和波特率
+ python scripts/workflow_runner.py --run build-flash-monitor --build-system platformio --project /path --port COM42 --baud 115200
+@@ -51,15 +53,18 @@
+ | --- | --- |
+ | `--build-system` | 构建系统：keil、cmake、platformio |
+ | `--project` | 工程路径 |
++| `--build-dir` | 构建输出目录（cmake；本工程 `build-arm`，缺省会新建 `build/`） |
++| `--build-type` | 构建类型（cmake；本工程 `Release`，缺省 Debug 会触发全量重编） |
+ | `--target` | 构建目标/环境/预设 |
+ 
+ ### 烧录参数
+ 
+ | 参数 | 说明 |
+ | --- | --- |
+-| `--artifact` | 固件产物路径（可选，自动推断） |
+-| `--flash-interface` | OpenOCD 接口（如 stlink） |
+-| `--flash-target` | OpenOCD 目标（如 stm32f4x） |
++| `--artifact` | 固件产物路径（可选，默认从编译输出的 `⭐ 首选` 行自动提取） |
++| `--flash-interface` | OpenOCD 接口（cmake 分支默认 `jlink`） |
++| `--flash-target` | OpenOCD target cfg（cmake 分支默认 `rp2350`） |
++| `--flash-speed` | OpenOCD adapter speed，单位 kHz（默认 1000） |
+ 
+ ### 监控参数
+ 
+@@ -80,7 +85,7 @@
+ | 构建系统 | 编译 | 烧录 | 调试 | 监控 |
+ | --- | --- | --- | --- | --- |
+ | keil | keil_builder.py | keil_flasher.py | gdb_debugger.py | serial_monitor.py |
+-| cmake | cmake_builder.py | openocd_flasher.py | gdb_debugger.py | serial_monitor.py |
++| cmake | cmake_builder.py | **flash_openocd.sh**（flash-openocd-rp2350，本工程覆盖） | **gdb_openocd.sh**（debug-openocd-rp2350，本工程覆盖） | serial_monitor.py |
+ | platformio | platformio_builder.py | pio_flasher.py | pio_debugger.py | serial_monitor.py |
+ 
+ ## 返回码
+--- a/workflow/scripts/workflow_runner.py
++++ b/workflow/scripts/workflow_runner.py
+@@ -44,8 +44,11 @@
+     },
+     "cmake": {
+         "build": "build-cmake/scripts/cmake_builder.py",
+-        "flash": "flash-openocd/scripts/openocd_flasher.py",
+-        "debug": "debug-gdb-openocd/scripts/gdb_debugger.py",
++        # 本工程自建覆盖：RP2350 + J-Link 的实测烧写通道是 OpenOCD，
++        # 上游默认指向未安装的 flash-openocd/scripts/openocd_flasher.py。
++        "flash": "flash-openocd-rp2350/scripts/flash_openocd.sh",
++        # 调试同样走 OpenOCD 的 GDB Server（J-Link V6.88 无 RP2350 器件，JLinkGDBServer 不可用）
++        "debug": "debug-openocd-rp2350/scripts/gdb_openocd.sh",
+         "monitor": "serial-monitor/scripts/serial_monitor.py",
+     },
+     "platformio": {
+@@ -143,8 +146,15 @@
+ # 步骤命令构建
+ # ---------------------------------------------------------------------------
+ 
++def script_cmd(script: Path) -> list[str]:
++    """按脚本后缀决定执行方式：.py 走当前 Python，其余（.sh 等可执行文件）直接调用。"""
++    if script.suffix.lower() == ".py":
++        return [sys.executable, str(script)]
++    return [str(script)]
++
++
+ def build_build_cmd(script: Path, args) -> list[str]:
+-    cmd = [sys.executable, str(script)]
++    cmd = script_cmd(script)
+     if args.build_system == "keil":
+         if args.project:
+             cmd += ["--project", args.project]
+@@ -155,6 +165,10 @@
+             cmd += ["--source", args.project]
+         if args.target:
+             cmd += ["--preset", args.target]
++        if args.build_dir:
++            cmd += ["--build-dir", args.build_dir]
++        if args.build_type:
++            cmd += ["--build-type", args.build_type]
+     elif args.build_system == "platformio":
+         if args.project:
+             cmd += ["--project-dir", args.project]
+@@ -166,7 +180,7 @@
+ 
+ 
+ def build_flash_cmd(script: Path, args, artifact: str | None) -> list[str]:
+-    cmd = [sys.executable, str(script)]
++    cmd = script_cmd(script)
+     if args.build_system == "keil":
+         cmd.append("--flash")
+         if args.project:
+@@ -174,13 +188,13 @@
+         if args.target:
+             cmd += ["--target", args.target]
+     elif args.build_system == "cmake":
+-        cmd.append("--flash")
++        # flash-openocd-rp2350 的接口：--artifact / --interface / --target(openocd target) / --speed
+         if artifact:
+             cmd += ["--artifact", artifact]
+-        if args.flash_interface:
+-            cmd += ["--interface", args.flash_interface]
+-        if args.flash_target:
+-            cmd += ["--target", args.flash_target]
++        cmd += ["--interface", args.flash_interface or "jlink"]
++        cmd += ["--target", args.flash_target or "rp2350"]
++        if args.flash_speed:
++            cmd += ["--speed", str(args.flash_speed)]
+     elif args.build_system == "platformio":
+         if artifact:
+             cmd += ["--artifact", artifact]
+@@ -194,7 +208,7 @@
+ 
+ 
+ def build_monitor_cmd(script: Path, args) -> list[str]:
+-    cmd = [sys.executable, str(script), "--duration", "8"]
++    cmd = script_cmd(script) + ["--duration", "8"]
+     if args.port:
+         cmd += ["--port", args.port]
+     if args.baud:
+@@ -203,12 +217,18 @@
+ 
+ 
+ def build_debug_cmd(script: Path, args, artifact: str | None) -> list[str]:
+-    cmd = [sys.executable, str(script)]
++    cmd = script_cmd(script)
+     if args.build_system == "platformio":
+         if args.project:
+             cmd += ["--project-dir", args.project]
+         if args.target:
+             cmd += ["--env", args.target]
++    elif args.build_system == "cmake":
++        # debug-openocd-rp2350 的接口：--elf / --interface / --target
++        if artifact:
++            cmd += ["--elf", artifact]
++        cmd += ["--interface", args.flash_interface or "jlink"]
++        cmd += ["--target", args.flash_target or "rp2350"]
+     else:
+         if artifact:
+             cmd += ["--elf", artifact]
+@@ -238,10 +258,15 @@
+     else:
+         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=os.getcwd(),
+                               encoding="utf-8", errors="replace")
+-        output = proc.stdout or ""
++        # openocd 把日志写到 stderr，合并进 output 以便调用方判断成败（如 Verified OK）
++        output = (proc.stdout or "") + (proc.stderr or "")
+         if proc.stdout:
+             for line in proc.stdout.strip().splitlines():
+                 print(f"    {line}")
++        elif proc.returncode == 0 and proc.stderr:
++            # 成功但所有日志都在 stderr：打印尾部，便于确认校验结果
++            for line in proc.stderr.strip().splitlines()[-12:]:
++                print(f"    {line}")
+         if proc.returncode != 0 and proc.stderr:
+             for line in proc.stderr.strip().splitlines()[-5:]:
+                 print(f"    ⚠️ {line}")
+@@ -297,6 +322,9 @@
+                 artifact = found
+                 print(f"\n  📦 产物: {artifact}")
+ 
++        if step == "flash" and not args.dry_run and ok and "Verified OK" not in output:
++            print("\n  ⚠️ 烧录命令成功，但输出里没有 Verified OK —— 确认是否跳过校验（--no-verify）")
++
+         if not ok and not args.dry_run:
+             print(f"\n❌ 步骤 [{label}] 失败，流水线中止")
+             return WorkflowResult(status="failure", summary=f"{label}失败",
+@@ -342,12 +370,15 @@
+     p.add_argument("--build-system", choices=["keil", "cmake", "platformio"],
+                    help="构建系统")
+     p.add_argument("--project", help="工程路径")
++    p.add_argument("--build-dir", help="构建输出目录（cmake，本工程用 build-arm）")
++    p.add_argument("--build-type", help="构建类型（cmake：Debug/Release/RelWithDebInfo；本工程用 Release，否则会整盘重编）")
+     p.add_argument("--target", help="构建目标/环境/预设")
+     p.add_argument("--port", help="串口（monitor 用）")
+     p.add_argument("--baud", type=int, help="波特率")
+     p.add_argument("--artifact", help="固件产物路径（可选）")
+-    p.add_argument("--flash-interface", help="烧录接口（OpenOCD）")
+-    p.add_argument("--flash-target", help="烧录目标（OpenOCD）")
++    p.add_argument("--flash-interface", help="烧录接口（OpenOCD，默认 jlink）")
++    p.add_argument("--flash-target", help="烧录目标（OpenOCD target cfg，默认 rp2350）")
++    p.add_argument("--flash-speed", type=int, help="OpenOCD adapter speed，单位 kHz（默认 1000）")
+     p.add_argument("-v", "--verbose", action="store_true", help="详细输出")
+     return p
+ 

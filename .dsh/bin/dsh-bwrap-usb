@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# dsh-bwrap-usb — 给 DSH 沙箱的 bwrap profile 追加 USB 设备直通。
+#
+# 用法（由 @deepseek-ai/dsh-sandbox-local 的 runnerCommand 自动调用）：
+#   runnerCommand: ["/home/zhang/.dsh/bin/dsh-bwrap-usb"]
+#   seam 会追加 profile 参数，最终 argv 形如：
+#     dsh-bwrap-usb --ro-bind / / --dev /dev --unshare-pid --proc /proc \
+#       --die-with-parent --tmpfs /tmp --bind <ws> <ws> -- bash -c '<cmd>'
+#
+# 原理：--dev /dev 会新建一个只有基础节点的 devtmpfs，所以 /dev/bus/usb 不存在。
+# 在 `--` 之前追加 --dev-bind /dev/bus/usb /dev/bus/usb，把宿主 USB 总线挂回来。
+# 必须插在 profile 参数之后：若插在 --ro-bind / / 之前，后续挂载会把 / 整个盖掉。
+#
+# 可通过环境变量覆盖（调试用）：
+#   DSH_BWRAP_USB_SRC   源路径，默认 /dev/bus/usb
+#   DSH_BWRAP_REAL      真实 bwrap，默认 /usr/bin/bwrap
+set -euo pipefail
+
+BWRAP="${DSH_BWRAP_REAL:-/usr/bin/bwrap}"
+SRC="${DSH_BWRAP_USB_SRC:-/dev/bus/usb}"
+
+[ -x "$BWRAP" ] || { echo "dsh-bwrap-usb: 找不到 $BWRAP" >&2; exit 1; }
+
+args=("$@")
+out=()
+inserted=0
+for a in "${args[@]}"; do
+  if [ "$inserted" -eq 0 ] && [ "$a" = "--" ]; then
+    # 源不存在时不要加（否则 bwrap 直接报 Can't find source path 并让每条命令都失败）
+    if [ -e "$SRC" ]; then
+      out+=(--dev-bind "$SRC" /dev/bus/usb)
+    fi
+    # 串口：CDC-ACM（/dev/ttyACM*）与 USB-UART 桥（/dev/ttyUSB*），
+    # 以及 /dev/serial/by-id 的稳定符号链接（指向 ../../ttyACM0，需同时绑节点）。
+    for dev in /dev/ttyACM* /dev/ttyUSB*; do
+      [ -e "$dev" ] && out+=(--dev-bind "$dev" "$dev")
+    done
+    if [ -e /dev/serial ]; then
+      out+=(--dev-bind /dev/serial /dev/serial)
+    fi
+    inserted=1
+  fi
+  out+=("$a")
+done
+
+if [ "$inserted" -eq 0 ]; then
+  # 没有 `--` 说明调用方不是预期用法，直接透传（宁可少挂载，不可错位）
+  exec "$BWRAP" "${args[@]}"
+fi
+
+exec "$BWRAP" "${out[@]}"
