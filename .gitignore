@@ -8,3 +8,6 @@
 
 # build folder
 /build*
+
+# local Bumble test tool (capability-enabled Python copy)
+/bumble-py

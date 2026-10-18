@@ -28,7 +28,7 @@ USB Host ──UAC──> ESP32-S31 ──HFP AG (SCO over HCI)──> Bluetooth
 | `env.sh` | 本机 ESP-IDF 环境（工具装在仓库根目录的 `.esp-idf` / `.espressif`） |
 | `main/idf_component.yml` | 依赖 `espressif/usb_device_uac` |
 
-> Pico 相关代码仍保留在仓库根目录（`src/`、`CMakeLists.txt` 等）作为历史参考，本工程不编译它们；Pico 的 HFP 调试状态在 `wip/hfp-sco` 分支。
+> Pico 相关代码已从当前分支移除；历史版本可在 git history 与 `wip/hfp-sco` 分支查看。
 
 ## 构建
 
