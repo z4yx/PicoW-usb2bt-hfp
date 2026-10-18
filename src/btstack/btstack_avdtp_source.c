@@ -2626,6 +2626,8 @@ static void avrcp_controller_packet_handler(uint8_t packet_type, uint16_t channe
     }  
 }
 
+void hfp_ag_debug_init(void);
+
 int btstack_main(int argc, const char * argv[]){
 
     l2cap_init();
@@ -2669,6 +2671,9 @@ int btstack_main(int argc, const char * argv[]){
     uint16_t controller_supported_features = AVRCP_FEATURE_MASK_CATEGORY_MONITOR_OR_AMPLIFIER;
     avrcp_controller_create_sdp_record(sdp_avrcp_controller_service_buffer, 0x10003, controller_supported_features, NULL, NULL);
     sdp_register_service(sdp_avrcp_controller_service_buffer);
+
+    // Minimal HFP AG for Bluetooth debugging: SDP record + SLC/audio logging.
+    hfp_ag_debug_init();
 
 
 #ifdef HAVE_BTSTACK_STDIN

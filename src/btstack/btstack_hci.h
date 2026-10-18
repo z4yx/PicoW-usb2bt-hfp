@@ -11,6 +11,7 @@
 
 static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 void bt_hci_init(void);
+void hfp_ag_debug_init(void);
 
 const char * get_device_addr_string();
 bd_addr_t * get_device_addr();
