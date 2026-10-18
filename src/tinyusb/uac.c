@@ -32,6 +32,7 @@
 
  #include "../btstack/btstack_avdtp_source.h"
  #include "pico/flash.h"
+ #include "pico/time.h"
 
 
  
@@ -93,6 +94,19 @@
 
  // Buffer for microphone data
  int32_t mic_buf[CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ / 4];
+
+ // Microphone IN rate servo.
+ // The host polls the asynchronous IN endpoint about every 1 ms but not exactly
+ // at 1 kHz, and CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX is only the endpoint's maximum
+ // packet size (98 B = 49 samples for 48 kHz/16-bit/mono). Sending that maximum
+ // on every callback made the mic stream run ~1.7% fast. Instead, track USB time
+ // and send the number of samples actually due (48 per ms on average, i.e. 48 or
+ // 49 per packet), which keeps the long-term rate at current_sample_rate.
+ static uint64_t mic_servo_last_us;
+ static uint32_t mic_servo_frac;   // fractional micro-samples
+ static int32_t  mic_servo_due;    // samples that should have been sent by now
+ static int32_t  mic_servo_sent;   // samples already written to the IN FIFO
+ static bool     mic_servo_reset = true;
 
  // Buffer for speaker data
  int32_t spk_buf[CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ / 4];
@@ -378,6 +392,10 @@ void tinyusb_audio_control_task(void){
    TU_LOG2("Set interface %d alt %d\r\n", itf, alt);
    if (ITF_NUM_AUDIO_STREAMING_SPK == itf && alt != 0)
        blink_interval_ms = BLINK_STREAMING;
+
+   // (Re)start the mic rate servo whenever the capture stream is opened.
+   if (ITF_NUM_AUDIO_STREAMING_MIC == itf && alt != 0)
+       mic_servo_reset = true;
  
    // Clear buffer when streaming format is changed
    spk_data_size = 0;
@@ -435,7 +453,41 @@ bool tud_audio_tx_done_isr(uint8_t rhport, uint16_t n_bytes_sent, uint8_t func_i
 
   // Fill microphone IN endpoint with silence for now. SCO bridge will fill real samples later.
 #if CFG_TUD_AUDIO_ENABLE_EP_IN
-  uint16_t n = CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX;
+  const uint16_t bytes_per_sample = CFG_TUD_AUDIO_FUNC_1_FORMAT_1_N_BYTES_PER_SAMPLE_TX *
+                                    CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX;
+  const uint16_t max_samples = CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX / bytes_per_sample;
+
+  // Rate servo: send the samples that are due on the USB time axis instead of
+  // always sending the endpoint's maximum packet size.
+  uint64_t now = time_us_64();
+  if (mic_servo_reset) {
+    mic_servo_reset = false;
+    mic_servo_last_us = now;
+    mic_servo_frac = 0;
+    mic_servo_due = max_samples - 1;   // prime the first packet with 48 samples
+    mic_servo_sent = 0;
+  }
+
+  uint32_t elapsed_us = (uint32_t)(now - mic_servo_last_us);
+  mic_servo_last_us = now;
+  if (elapsed_us > 10000) {
+    // Host stopped polling for a long time: resync instead of bursting to catch up.
+    elapsed_us = 1000;
+    mic_servo_due = mic_servo_sent;
+    mic_servo_frac = 0;
+  }
+
+  uint64_t acc = (uint64_t)elapsed_us * current_sample_rate + mic_servo_frac;
+  mic_servo_due += (int32_t)(acc / 1000000u);
+  mic_servo_frac = (uint32_t)(acc % 1000000u);
+
+  int32_t want = mic_servo_due - mic_servo_sent;
+  if (want < 0) want = 0;
+  if (want > max_samples) want = max_samples;
+  if (want == 0) want = 1;             // always keep the IN endpoint armed
+  mic_servo_sent += want;
+
+  uint16_t n = (uint16_t)(want * bytes_per_sample);
   if (n == 0) return true;
   // try to get mic samples from bridge
   extern uint16_t sco_usb_bridge_pop_mic_samples(int16_t *dst, uint16_t max_samples);
