@@ -30,6 +30,9 @@
 
 #define BT_HF_AG_TAG    "HF_AG_DEMO_MAIN"
 
+/* Bring-up switch: keep UAC off while debugging the Bluetooth path. */
+#define ENABLE_UAC_BRINGUP 0
+
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 
 /* event for handler "hf_ag_hdl_stack_up */
@@ -98,29 +101,38 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     /* USB UAC device (TinyUSB) + bridge to HFP SCO. */
+#if ENABLE_UAC_BRINGUP
     uac_bridge_init();
+#else
+    ESP_LOGW(BT_HF_TAG, "UAC bridge disabled for BT bring-up");
+#endif
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ESP_LOGI(BT_HF_TAG, "initializing BT controller...");
     if ((ret = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
         ESP_LOGE(BT_HF_TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+    ESP_LOGI(BT_HF_TAG, "enabling BT controller (classic)...");
     if ((ret = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
         ESP_LOGE(BT_HF_TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+    ESP_LOGI(BT_HF_TAG, "BT controller enabled; initializing Bluedroid...");
     esp_bluedroid_config_t bluedroid_cfg = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
     if ((ret = esp_bluedroid_init_with_cfg(&bluedroid_cfg)) != ESP_OK) {
         ESP_LOGE(BT_HF_TAG, "%s initialize bluedroid failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
+    ESP_LOGI(BT_HF_TAG, "Bluedroid initialized; enabling...");
     if ((ret = esp_bluedroid_enable()) != ESP_OK) {
         ESP_LOGE(BT_HF_TAG, "%s enable bluedroid failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
+    ESP_LOGI(BT_HF_TAG, "Bluedroid enabled");
     ESP_LOGI(BT_HF_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
     /* create application task */
     bt_app_task_start_up();
@@ -143,11 +155,16 @@ void app_main(void)
 #if CONFIG_EXAMPLE_ENABLE_CONSOLE_REPL
     esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    esp_console_dev_uart_config_t uart_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
     repl_config.prompt = "hfp_ag>";
 
-    // init console REPL environment
-    ESP_ERROR_CHECK(esp_console_new_repl_uart(&uart_config, &repl_config, &repl));
+    // init console REPL environment on the configured primary console
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    esp_console_dev_usb_serial_jtag_config_t console_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&console_config, &repl_config, &repl));
+#else
+    esp_console_dev_uart_config_t console_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_uart(&console_config, &repl_config, &repl));
+#endif
 
     /* Register commands */
     register_hfp_ag();

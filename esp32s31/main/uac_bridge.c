@@ -4,6 +4,7 @@
 #include <inttypes.h>
 
 #include "esp_log.h"
+#include "esp_err.h"
 #include "esp_hf_ag_api.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
@@ -188,6 +189,13 @@ void uac_bridge_init(void)
         .set_mute_cb = uac_set_mute_cb,
         .cb_ctx = NULL,
     };
-    ESP_ERROR_CHECK(uac_device_init(&config));
+    esp_err_t err = uac_device_init(&config);
+    if (err != ESP_OK) {
+        /* Bring-up without the functional USB (OTG) attached: keep the HFP
+         * side alive so Bluetooth can be debugged on the USB-Serial/JTAG
+         * console.  The bridge simply supplies silence until UAC is up. */
+        ESP_LOGW(TAG, "USB UAC init failed (%s); continuing without USB audio", esp_err_to_name(err));
+        return;
+    }
     ESP_LOGI(TAG, "USB UAC device started (%d Hz, 2ch out / 1ch in)", UAC_RATE);
 }
