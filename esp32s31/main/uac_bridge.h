@@ -12,13 +12,14 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void uac_bridge_init(void);
+void uac_bridge_init(bool enable_uac);
 
 /* Called by the HFP AG stack.  `sz` is the PCM block size in bytes. */
 uint32_t uac_bridge_hfp_outgoing(uint8_t *buf, uint32_t sz);

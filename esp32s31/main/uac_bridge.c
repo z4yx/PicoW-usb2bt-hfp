@@ -5,6 +5,7 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_timer.h"
 #include "esp_hf_ag_api.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
@@ -19,9 +20,18 @@ static const char *TAG = "uac_bridge";
 #define MAX_UAC_FRAMES      1024
 #define MAX_HFP_SAMPLES     1024
 #define MAX_UP_SAMPLES      (MAX_HFP_SAMPLES * 6)
+#define HFP_LOOPBACK        1
 
 static StreamBufferHandle_t s_spk_stream;   /* 48 kHz mono, USB -> HFP */
 static StreamBufferHandle_t s_mic_stream;   /* 48 kHz mono, HFP -> USB */
+static StreamBufferHandle_t s_loop_stream;  /* HFP-rate PCM, SCO RX -> TX */
+static esp_timer_handle_t s_tx_timer;
+static bool s_tx_timer_running;
+static volatile uint32_t s_loop_rx_bytes;
+static volatile uint32_t s_loop_tx_bytes;
+static volatile uint32_t s_loop_pkts;
+static volatile uint32_t s_loop_out_calls;
+static volatile uint32_t s_tx_timer_calls;
 static resampler_t s_down;
 static resampler_t s_up;
 static volatile int s_hfp_rate;
@@ -33,6 +43,10 @@ static void uac_bridge_reset(void)
 {
     s_active = false;
     s_hfp_rate = 0;
+    if (s_tx_timer_running) {
+        esp_timer_stop(s_tx_timer);
+        s_tx_timer_running = false;
+    }
     resampler_reset(&s_down, UAC_RATE, UAC_RATE);
     resampler_reset(&s_up, UAC_RATE, UAC_RATE);
     if (s_spk_stream) {
@@ -40,6 +54,9 @@ static void uac_bridge_reset(void)
     }
     if (s_mic_stream) {
         xStreamBufferReset(s_mic_stream);
+    }
+    if (s_loop_stream) {
+        xStreamBufferReset(s_loop_stream);
     }
 }
 
@@ -67,9 +84,17 @@ void uac_bridge_set_audio_state(int state)
     if (s_mic_stream) {
         xStreamBufferReset(s_mic_stream);
     }
+    if (s_loop_stream) {
+        xStreamBufferReset(s_loop_stream);
+    }
     resampler_reset(&s_down, UAC_RATE, (uint32_t)s_hfp_rate);
     resampler_reset(&s_up, (uint32_t)s_hfp_rate, UAC_RATE);
     s_active = true;
+    if (s_tx_timer && !s_tx_timer_running) {
+        if (esp_timer_start_periodic(s_tx_timer, 7500) == ESP_OK) {
+            s_tx_timer_running = true;
+        }
+    }
     ESP_LOGI(TAG, "HFP audio connected: %d Hz", s_hfp_rate);
 }
 
@@ -124,9 +149,22 @@ static void uac_set_mute_cb(uint32_t mute, void *cb_ctx)
     ESP_LOGI(TAG, "USB host mute: %" PRIu32, mute);
 }
 
-/* HFP -> USB: up-sample 8/16 kHz mono to 48 kHz mono. */
+/* HFP -> USB (or HFP loopback): 8/16 kHz mono. */
 void uac_bridge_hfp_incoming(const uint8_t *buf, uint32_t sz)
 {
+#if HFP_LOOPBACK
+    if (!s_active || !s_loop_stream) {
+        return;
+    }
+    size_t sent = xStreamBufferSend(s_loop_stream, buf, sz, 0);
+    s_loop_rx_bytes += sent;
+    if (++s_loop_pkts % 128 == 0) {
+        ESP_LOGI(TAG, "loopback rx=%" PRIu32 " tx=%" PRIu32 " pkts=%" PRIu32
+                 " timer=%" PRIu32 " out_calls=%" PRIu32,
+                 s_loop_rx_bytes, s_loop_tx_bytes, s_loop_pkts,
+                 s_tx_timer_calls, s_loop_out_calls);
+    }
+#else
     static int16_t out[MAX_UP_SAMPLES];
 
     if (!s_active || s_hfp_rate == 0 || s_hfp_rate == 32000 || !s_mic_stream) {
@@ -141,11 +179,29 @@ void uac_bridge_hfp_incoming(const uint8_t *buf, uint32_t sz)
     if (n) {
         xStreamBufferSend(s_mic_stream, out, n * sizeof(int16_t), 0);
     }
+#endif
 }
 
-/* HFP <- USB: down-sample 48 kHz mono to 8/16 kHz mono. */
+/* HFP <- USB (or HFP loopback): 8/16 kHz mono. */
 uint32_t uac_bridge_hfp_outgoing(uint8_t *buf, uint32_t sz)
 {
+#if HFP_LOOPBACK
+    if (!s_active || !s_loop_stream) {
+        memset(buf, 0, sz);
+        return sz;
+    }
+    size_t got = xStreamBufferReceive(s_loop_stream, buf, sz, 0);
+    if (got < sz) {
+        memset(buf + got, 0, sz - got);
+    }
+    s_loop_out_calls++;
+    if (s_loop_out_calls <= 3 || s_loop_out_calls % 256 == 0) {
+        ESP_LOGI(TAG, "outgoing #%" PRIu32 " sz=%" PRIu32 " got=%u",
+                 s_loop_out_calls, sz, (unsigned)got);
+    }
+    s_loop_tx_bytes += sz;
+    return sz;
+#else
     static int16_t in[MAX_HFP_SAMPLES * 6];
 
     if (!s_active || s_hfp_rate == 0 || s_hfp_rate == 32000 || !s_spk_stream) {
@@ -172,15 +228,41 @@ uint32_t uac_bridge_hfp_outgoing(uint8_t *buf, uint32_t sz)
         memset((int16_t *)buf + n, 0, (out_samples - n) * sizeof(int16_t));
     }
     return sz;
+#endif
 }
 
-void uac_bridge_init(void)
+static void tx_ready_timer_cb(void *arg)
+{
+    (void)arg;
+    s_tx_timer_calls++;
+    if (s_active) {
+        esp_hf_ag_outgoing_data_ready();
+    }
+}
+
+void uac_bridge_init(bool enable_uac)
 {
     s_spk_stream = xStreamBufferCreate(STREAM_BYTES, 1);
     s_mic_stream = xStreamBufferCreate(STREAM_BYTES, 1);
+#if HFP_LOOPBACK
+    s_loop_stream = xStreamBufferCreate(STREAM_BYTES, 1);
+#endif
     configASSERT(s_spk_stream && s_mic_stream);
+#if HFP_LOOPBACK
+    configASSERT(s_loop_stream);
+#endif
+    const esp_timer_create_args_t tx_timer_args = {
+        .callback = tx_ready_timer_cb,
+        .name = "hfp_tx_ready",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&tx_timer_args, &s_tx_timer));
 
     uac_bridge_reset();
+
+    if (!enable_uac) {
+        ESP_LOGW(TAG, "UAC disabled; HFP loopback=%d", HFP_LOOPBACK);
+        return;
+    }
 
     uac_device_config_t config = {
         .output_cb = uac_output_cb,

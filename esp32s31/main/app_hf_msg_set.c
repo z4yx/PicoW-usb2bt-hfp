@@ -21,7 +21,20 @@ esp_bd_addr_t hf_peer_addr = {0xB0, 0xF1, 0xA3, 0x01, 0x2D,0x2E};
 
 HF_CMD_HANDLER(conn)
 {
-    printf("Connect.\n");
+    if (argn > 1) {
+        unsigned int bda[6];
+        if (sscanf(argv[1], "%x:%x:%x:%x:%x:%x",
+                   &bda[0], &bda[1], &bda[2], &bda[3], &bda[4], &bda[5]) != 6) {
+            printf("Invalid BDA, expected XX:XX:XX:XX:XX:XX\n");
+            return 1;
+        }
+        for (int i = 0; i < 6; i++) {
+            hf_peer_addr[i] = (uint8_t)bda[i];
+        }
+    }
+    printf("Connect to %02X:%02X:%02X:%02X:%02X:%02X\n",
+           hf_peer_addr[0], hf_peer_addr[1], hf_peer_addr[2],
+           hf_peer_addr[3], hf_peer_addr[4], hf_peer_addr[5]);
     esp_hf_ag_slc_connect(hf_peer_addr);
     return 0;
 }
@@ -227,8 +240,8 @@ HF_CMD_HANDLER(dn)
     if (argn != 2) {
         printf("Insufficient number of arguments");
     } else {
-        printf("Dial number %s\n", argv[1]);
-        esp_hf_ag_out_call(hf_peer_addr,1,0,1,2,argv[1],0);
+        printf("Dial number %s (dialing, then active when SCO is up)\n", argv[1]);
+        bt_app_hf_dial(argv[1]);
     }
     return 0;
 }

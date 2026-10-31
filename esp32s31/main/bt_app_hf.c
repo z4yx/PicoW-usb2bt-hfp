@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
@@ -116,6 +117,51 @@ const char *c_codec_mode_str[] = {
     [ESP_HF_CODEC_MSBC]  = "MSBC",
     [ESP_HF_CODEC_LC3]   = "LC3-SWB",
 };
+
+/* Outgoing call handling: report dialing first, then mark the call active
+ * once the SCO link is up.  Kept outside the HCI data-path #if so the
+ * console command still links for PCM builds. */
+#define BT_APP_HF_CALL_NUM_MAX   32
+
+static char s_out_call_number[BT_APP_HF_CALL_NUM_MAX];
+static volatile bool s_out_call_pending;
+static volatile bool s_audio_connected;
+
+static void bt_app_hf_out_call_active(void)
+{
+    if (s_out_call_number[0] == '\0') {
+        return;
+    }
+    ESP_LOGI(BT_HF_TAG, "Outgoing call active: %s", s_out_call_number);
+    esp_hf_ag_out_call(hf_peer_addr, 1, 0,
+                       ESP_HF_CALL_STATUS_CALL_IN_PROGRESS,
+                       ESP_HF_CALL_SETUP_STATUS_IDLE,
+                       s_out_call_number, 0);
+}
+
+void bt_app_hf_dial(const char *number)
+{
+    if (number == NULL || number[0] == '\0') {
+        ESP_LOGW(BT_HF_TAG, "Outgoing call: empty number");
+        return;
+    }
+    snprintf(s_out_call_number, sizeof(s_out_call_number), "%s", number);
+
+    /* Step 1: dialing, no active call yet.  The stack still opens SCO here
+     * because BTC_HF_OUT_CALL_EVT calls btc_hf_connect_audio() before it
+     * updates the phone state. */
+    s_out_call_pending = !s_audio_connected;
+    ESP_LOGI(BT_HF_TAG, "Outgoing call dialing: %s", s_out_call_number);
+    esp_hf_ag_out_call(hf_peer_addr, 0, 0,
+                       ESP_HF_CALL_STATUS_NO_CALLS,
+                       ESP_HF_CALL_SETUP_STATUS_OUTGOING_DIALING,
+                       s_out_call_number, 0);
+
+    /* SCO already up: no further AUDIO_STATE_EVT will arrive. */
+    if (!s_out_call_pending) {
+        bt_app_hf_out_call_active();
+    }
+}
 
 #if CONFIG_BT_HFP_AUDIO_DATA_PATH_HCI
 #define TABLE_SIZE         100
@@ -787,6 +833,11 @@ void bt_app_hf_cb(esp_hf_cb_event_t event, esp_hf_cb_param_t *param)
                     param->conn_stat.peer_feat,
                     param->conn_stat.chld_feat);
             memcpy(hf_peer_addr, param->conn_stat.remote_bda, ESP_BD_ADDR_LEN);
+            if (param->conn_stat.state == ESP_HF_CONNECTION_STATE_DISCONNECTED ||
+                param->conn_stat.state == ESP_HF_CONNECTION_STATE_SLC_CONNECTED) {
+                s_audio_connected = false;
+                s_out_call_pending = false;
+            }
             break;
         }
 
@@ -836,8 +887,15 @@ void bt_app_hf_cb(esp_hf_cb_event_t event, esp_hf_cb_param_t *param)
                 esp_hf_ag_register_data_callback(bt_app_hf_incoming_cb, bt_app_hf_outgoing_cb);
 #endif /* CONFIG_BT_HFP_USE_EXTERNAL_CODEC */
                 bt_app_send_data();
+                s_audio_connected = true;
+                if (s_out_call_pending) {
+                    s_out_call_pending = false;
+                    bt_app_hf_out_call_active();
+                }
             } else if (param->audio_stat.state == ESP_HF_AUDIO_STATE_DISCONNECTED) {
                 ESP_LOGI(BT_HF_TAG, "--ESP AG Audio Connection Disconnected.");
+                s_audio_connected = false;
+                s_out_call_pending = false;
                 uac_bridge_set_audio_state(param->audio_stat.state);
                 bt_app_send_data_shut_down();
 #if CONFIG_BT_HFP_USE_EXTERNAL_CODEC
@@ -873,17 +931,13 @@ void bt_app_hf_cb(esp_hf_cb_event_t event, esp_hf_cb_param_t *param)
 
         case ESP_HF_IND_UPDATE_EVT:
         {
-            ESP_LOGI(BT_HF_TAG, "--UPDATE INDICATOR!");
-            esp_hf_call_status_t call_state = 1;
-            esp_hf_call_setup_status_t call_setup_state = 2;
-            esp_hf_network_state_t ntk_state = 1;
-            int signal = 2;
-            int battery = 3;
-            esp_hf_ag_ciev_report(param->ind_upd.remote_addr, ESP_HF_IND_TYPE_CALL, call_state);
-            esp_hf_ag_ciev_report(param->ind_upd.remote_addr, ESP_HF_IND_TYPE_CALLSETUP, call_setup_state);
-            esp_hf_ag_ciev_report(param->ind_upd.remote_addr, ESP_HF_IND_TYPE_SERVICE, ntk_state);
-            esp_hf_ag_ciev_report(param->ind_upd.remote_addr, ESP_HF_IND_TYPE_SIGNAL, signal);
-            esp_hf_ag_ciev_report(param->ind_upd.remote_addr, ESP_HF_IND_TYPE_BATTCHG, battery);
+            /* AT+CBC is a battery query.  Never fake call/callsetup here:
+             * the old code reported call=1/callsetup=2 on every battery
+             * poll, which made the headset believe a call was being set up
+             * even when the AG was idle. */
+            ESP_LOGI(BT_HF_TAG, "--AT+CBC: report battery");
+            esp_hf_ag_ciev_report(param->ind_upd.remote_addr,
+                                  ESP_HF_IND_TYPE_BATTCHG, 3);
             break;
         }
 

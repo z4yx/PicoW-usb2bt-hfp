@@ -21,6 +21,14 @@ extern esp_bd_addr_t hf_peer_addr; // Declaration of peer device bdaddr
  */
 void bt_app_hf_cb(esp_hf_cb_event_t event, esp_hf_cb_param_t *param);
 
+/**
+ * @brief     Start an outgoing call.
+ *
+ * Sends the dialing state first (callsetup=2, no active call), then marks
+ * the call active (call=1, callsetup=0) when the SCO link is connected.
+ */
+void bt_app_hf_dial(const char *number);
+
 #if CONFIG_BT_HFP_AUDIO_DATA_PATH_HCI
 /**
  * @brief Stop PCM/LC3 TX before esp_hf_ag_audio_disconnect() to avoid use-after-free.

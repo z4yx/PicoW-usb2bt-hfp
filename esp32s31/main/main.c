@@ -100,12 +100,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    /* USB UAC device (TinyUSB) + bridge to HFP SCO. */
-#if ENABLE_UAC_BRINGUP
-    uac_bridge_init();
-#else
-    ESP_LOGW(BT_HF_TAG, "UAC bridge disabled for BT bring-up");
-#endif
+    /* USB UAC + HFP bridge; UAC can be disabled for BT/loopback bring-up. */
+    uac_bridge_init(ENABLE_UAC_BRINGUP);
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
 
