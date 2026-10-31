@@ -58,6 +58,21 @@ build/bootloader/bootloader.bin
 build/partition_table/partition-table.bin
 ```
 
+## ESP-IDF 本地补丁
+
+S31 的 HCI SCO 连接会上报 `tx_pkt_len == 0`，需要给 ESP-IDF 的
+`bta_ag_sco.c` 打一个小补丁，把 CVSD 包长默认成 40 字节，否则 HFP
+outgoing 回调拿到的 `sz` 为 0，SCO TX 永远不发包。
+
+补丁和说明见 [`patches/`](patches/README.md)：
+
+```bash
+esp32s31/patches/apply.sh          # 必需补丁
+esp32s31/patches/apply.sh --debug  # 额外打开每包 SCO TX 日志
+```
+
+`.esp-idf/` 被 gitignore，重新安装或更新 IDF 后需要重新执行。
+
 ## 烧写 / 串口
 
 `usb_device_uac` 使用 S31 的 **USB OTG**（模块 `USB_DP/USB_DM`）。烧写和 HFP 控制台建议使用开发板的 **USB-UART / USB Serial-JTAG** 口（模块的 `TX0/RX0` 或调试 USB），不要把 OTG 口同时当成 UART。

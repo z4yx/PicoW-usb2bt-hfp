@@ -1,0 +1,22 @@
+From: PicoW-usb2bt-hfp <dev@example.com>
+Subject: [PATCH] bta_ag_sco: log SCO TX write status (debug only)
+
+Optional bring-up aid: print the result of BTM_WriteScoData() and the
+current SCO state for every outgoing SCO packet.  This is noisy and runs
+at ERROR level, so apply it only when debugging the SCO/HCI TX path.
+
+---
+ components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c b/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
+--- a/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
++++ b/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
+@@ -873,6 +873,7 @@ static void bta_ag_sco_event(tBTA_AG_SCB *p_scb, UINT8 event)
+             if (len_to_send == p_scb->out_pkt_len) {
+                 if (p_sco->state == BTA_AG_SCO_OPEN_ST) {
+                     tBTM_STATUS write_stat = BTM_WriteScoData(p_sco->p_curr_scb->sco_idx, p_buf);
++                    APPL_TRACE_ERROR("SCO TX write_stat=%d len=%u state=%d", write_stat, len_to_send, p_sco->state);
+                     if (write_stat != BTM_SUCCESS) {
+                         break;
+                     }

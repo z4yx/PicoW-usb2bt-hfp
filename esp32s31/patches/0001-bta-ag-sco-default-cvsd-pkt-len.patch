@@ -1,0 +1,29 @@
+From: PicoW-usb2bt-hfp <dev@example.com>
+Subject: [PATCH] bta_ag_sco: default zero SCO packet length to 40 bytes
+
+ESP32-S31 reports tx_pkt_len == 0 for CVSD SCO connections over HCI.
+bta_ag_sco then keeps out_pkt_len/in_pkt_len at zero, so the HFP outgoing
+callback is invoked with sz == 0 and BTM_WriteScoData() is never armed.
+Default to the 40-byte CVSD packet size observed on this controller.
+
+---
+ components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c b/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
+--- a/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
++++ b/components/bt/host/bluedroid/bta/hf_ag/bta_ag_sco.c
+@@ -231,6 +231,13 @@ static void bta_ag_sco_conn_cback(UINT16 sco_idx)
+         {
+             p_scb->out_pkt_len = sco_data.tx_pkt_len * 2;
+             p_scb->in_pkt_len = sco_data.rx_pkt_len * 2;
++            /* ESP32-S31 USB-Serial/JTAG + SCO: the HCI connection reports a
++             * zero packet length.  The controller actually delivers 40-byte
++             * CVSD SCO packets; use that so the HCI outgoing path is armed. */
++            if (p_scb->out_pkt_len == 0) {
++                p_scb->out_pkt_len = 40;
++                p_scb->in_pkt_len = 40;
++            }
+         }
+         else {
+             p_scb->out_pkt_len = sco_data.tx_pkt_len;
